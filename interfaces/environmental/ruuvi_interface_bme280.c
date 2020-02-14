@@ -580,21 +580,23 @@ ruuvi_driver_status_t ruuvi_interface_bme280_data_get(ruuvi_driver_sensor_data_t
   // If we have valid data, return it.
   if(RUUVI_DRIVER_UINT64_INVALID != p_data->timestamp_ms)
   {
-    ruuvi_driver_sensor_data_t d_environmental = {0};
+    /*ruuvi_driver_sensor_data_t d_environmental = {0};
     ruuvi_driver_sensor_data_fields_t env_fields = {.bitfield = 0};
     float env_values[3];
     env_values[0] = (float)comp_data.humidity;
     env_values[1] = (float)comp_data.pressure;
     env_values[2] = (float)comp_data.temperature;
-    env_fields.datas.humidity_rh = 1;
+    env_fields.datas.humidity_rh = 0;
     env_fields.datas.pressure_pa = 1;
-    env_fields.datas.temperature_c = 1;
-    d_environmental.data = env_values;
-    d_environmental.fields = env_fields;
+    env_fields.datas.temperature_c = 0;
+    //d_environmental.data = env_values;
+    //d_environmental.fields = env_fields;
     d_environmental.valid  = env_fields;
     ruuvi_driver_sensor_data_populate(p_data,
                                       &d_environmental,
                                       p_data->fields);
+                                      */
+    p_data->data[1] = (float)comp_data.pressure;
   }
 
   return err_code;
