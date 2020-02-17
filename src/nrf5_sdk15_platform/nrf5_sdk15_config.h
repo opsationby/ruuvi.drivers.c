@@ -2,6 +2,7 @@
 #define NRF5_SDK5_CONFIG_H
 
 #include "ruuvi_driver_enabled_modules.h"
+#include "ruuvi_interface_communication_ble4_advertising.h"
 #include "ruuvi_interface_gpio.h"
 #include "ruuvi_interface_gpio_interrupt.h"    //!< Check if NRFX GPIOTE is required
 #include "ruuvi_interface_flash.h"             //!< Check if FDS is required
@@ -39,6 +40,18 @@
 #ifndef NRF_SDH_BLE_ENABLED
 /** @brief Required by SDK BLE modules not conditionally compiled */
 #  define NRF_SDH_BLE_ENABLED 1
+#endif
+
+#if RUUVI_NRF5_SDK15_ADV_ENABLED
+#  define NRF_BLE_SCAN_ENABLED 1
+#  define NRF_BLE_SCAN_BUFFER                  31
+#  define NRF_BLE_SCAN_SCAN_INTERVAL           1500
+#  define NRF_BLE_SCAN_SCAN_WINDOW             1400
+#  define NRF_BLE_SCAN_SCAN_DURATION           1500
+#  define NRF_BLE_SCAN_SUPERVISION_TIMEOUT     4000
+#  define NRF_BLE_SCAN_MIN_CONNECTION_INTERVAL 10
+#  define NRF_BLE_SCAN_MAX_CONNECTION_INTERVAL 2000
+#  define NRF_BLE_SCAN_SLAVE_LATENCY           0
 #endif
 
 #if RUUVI_NRF5_SDK15_GPIO_ENABLED

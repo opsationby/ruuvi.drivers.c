@@ -11,10 +11,15 @@
  *
  */
 
+#include "ruuvi_driver_enabled_modules.h"
 #include "ruuvi_driver_error.h"
 #include "ruuvi_interface_communication.h"
 #include "ruuvi_interface_communication_radio.h"
 #include <stdint.h>
+#if RI_ADV_ENABLED
+#define RUUVI_NRF5_SDK15_ADV_ENABLED RUUVI_NRF5_SDK15_ENABLED
+#endif
+
 
 /** @brief Alloved advertisement types */
 typedef enum

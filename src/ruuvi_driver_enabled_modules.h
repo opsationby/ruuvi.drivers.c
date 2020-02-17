@@ -57,6 +57,10 @@ data payload length is the maximum length */
 #  define RT_ADV_ENABLED ENABLE_DEFAULT
 #endif
 
+#if RT_ADV_ENABLED
+#  define RI_ADV_ENABLED 1
+#endif 
+
 #ifndef RT_BUTTON_ENABLED
 /** @brief Enable BLE advertising compilation. */
 #  define RT_BUTTON_ENABLED ENABLE_DEFAULT
