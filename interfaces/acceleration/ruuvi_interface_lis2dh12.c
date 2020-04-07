@@ -153,6 +153,9 @@ ruuvi_driver_status_t ruuvi_interface_lis2dh12_init(ruuvi_driver_sensor_t*
   lis2dh12_operating_mode_set(dev_ctx, dev.resolution);
   // Run self-test
   // turn self-test off.
+  uint8_t retries = 0;
+  do
+  {
   dev.selftest = LIS2DH12_ST_DISABLE;
   err_code |= lis2dh12_self_test_set(dev_ctx, dev.selftest);
   // wait for valid sample to be available, 3 samples at 400 Hz = 2.5 ms / sample => 7.5 ms. Wait 9 ms.
@@ -170,7 +173,7 @@ ruuvi_driver_status_t ruuvi_interface_lis2dh12_init(ruuvi_driver_sensor_t*
   ruuvi_interface_delay_ms(19);
   // Check self-test result
   lis2dh12_acceleration_raw_get(dev_ctx, data_raw_acceleration_new.u8bit);
-  err_code |= lis2dh12_verify_selftest_difference(&data_raw_acceleration_new,
+    err_code |= lis2dh12_verify_selftest_difference(&data_raw_acceleration_new,
               &data_raw_acceleration_old);
   // turn self-test off, keep error code in case we "lose" sensor after self-test
   dev.selftest = LIS2DH12_ST_DISABLE;
@@ -187,7 +190,8 @@ ruuvi_driver_status_t ruuvi_interface_lis2dh12_init(ruuvi_driver_sensor_t*
   lis2dh12_acceleration_raw_get(dev_ctx, data_raw_acceleration_new.u8bit);
   err_code |= lis2dh12_verify_selftest_difference(&data_raw_acceleration_new,
               &data_raw_acceleration_old);
-  // turn self-test off, keep error code in case we "lose" sensor after self-test
+  }while(RUUVI_DRIVER_ERROR_SELFTEST == err_code && retries++ < 5);
+  // Turn self-test off.
   dev.selftest = LIS2DH12_ST_DISABLE;
   err_code |= lis2dh12_self_test_set(dev_ctx, dev.selftest);
   // Turn accelerometer off
@@ -223,8 +227,9 @@ ruuvi_driver_status_t ruuvi_interface_lis2dh12_init(ruuvi_driver_sensor_t*
     acceleration_sensor->provides.datas.temperature_c = 1;
     dev.tsample = RUUVI_DRIVER_UINT64_INVALID;
   }
-
-  return err_code;
+  
+  // do not report self-test error to upper levels, as error might be caused by user moving tag.
+  return err_code & ~~RUUVI_DRIVER_ERROR_SELFTEST;
 }
 
 /*
