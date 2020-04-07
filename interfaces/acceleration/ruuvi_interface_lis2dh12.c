@@ -167,7 +167,7 @@ ruuvi_driver_status_t ruuvi_interface_lis2dh12_init(ruuvi_driver_sensor_t*
   dev.selftest = LIS2DH12_ST_POSITIVE;
   lis2dh12_self_test_set(dev_ctx, dev.selftest);
   // wait 2 samples in low power or normal mode for valid data.
-  ruuvi_interface_delay_ms(9);
+  ruuvi_interface_delay_ms(19);
   // Check self-test result
   lis2dh12_acceleration_raw_get(dev_ctx, data_raw_acceleration_new.u8bit);
   err_code |= lis2dh12_verify_selftest_difference(&data_raw_acceleration_new,
@@ -176,13 +176,13 @@ ruuvi_driver_status_t ruuvi_interface_lis2dh12_init(ruuvi_driver_sensor_t*
   dev.selftest = LIS2DH12_ST_DISABLE;
   err_code |= lis2dh12_self_test_set(dev_ctx, dev.selftest);
   // wait 2 samples and read value
-  ruuvi_interface_delay_ms(9);
+  ruuvi_interface_delay_ms(19);
   lis2dh12_acceleration_raw_get(dev_ctx, data_raw_acceleration_old.u8bit);
   // self-test to negative direction
   dev.selftest = LIS2DH12_ST_NEGATIVE;
   lis2dh12_self_test_set(dev_ctx, dev.selftest);
   // wait 2 samples
-  ruuvi_interface_delay_ms(9);
+  ruuvi_interface_delay_ms(19);
   // Check self-test result
   lis2dh12_acceleration_raw_get(dev_ctx, data_raw_acceleration_new.u8bit);
   err_code |= lis2dh12_verify_selftest_difference(&data_raw_acceleration_new,
