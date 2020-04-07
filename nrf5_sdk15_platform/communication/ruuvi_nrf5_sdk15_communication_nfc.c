@@ -180,7 +180,7 @@ ruuvi_driver_status_t ruuvi_interface_communication_nfc_data_set(void)
                                 sizeof(id_code),
                                 nfc_id_buf,
                                 nfc_id_length);
-  uint8_t data_code[] = {'d', 'a'}; // ID
+  uint8_t data_code[] = {'d', 't'}; // Data
   NFC_NDEF_TEXT_RECORD_DESC_DEF(nfc_bin_rec,                              \
                                 UTF_8,                                    \
                                 data_code, sizeof(data_code),             \
