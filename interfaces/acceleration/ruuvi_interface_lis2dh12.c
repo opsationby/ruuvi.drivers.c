@@ -172,7 +172,6 @@ ruuvi_driver_status_t ruuvi_interface_lis2dh12_init(ruuvi_driver_sensor_t*
   lis2dh12_acceleration_raw_get(dev_ctx, data_raw_acceleration_new.u8bit);
   err_code |= lis2dh12_verify_selftest_difference(&data_raw_acceleration_new,
               &data_raw_acceleration_old);
-  RUUVI_DRIVER_ERROR_CHECK(err_code, RUUVI_DRIVER_SUCCESS);
   // turn self-test off, keep error code in case we "lose" sensor after self-test
   dev.selftest = LIS2DH12_ST_DISABLE;
   err_code |= lis2dh12_self_test_set(dev_ctx, dev.selftest);
@@ -188,14 +187,12 @@ ruuvi_driver_status_t ruuvi_interface_lis2dh12_init(ruuvi_driver_sensor_t*
   lis2dh12_acceleration_raw_get(dev_ctx, data_raw_acceleration_new.u8bit);
   err_code |= lis2dh12_verify_selftest_difference(&data_raw_acceleration_new,
               &data_raw_acceleration_old);
-  RUUVI_DRIVER_ERROR_CHECK(err_code, RUUVI_DRIVER_SUCCESS);
   // turn self-test off, keep error code in case we "lose" sensor after self-test
   dev.selftest = LIS2DH12_ST_DISABLE;
   err_code |= lis2dh12_self_test_set(dev_ctx, dev.selftest);
   // Turn accelerometer off
   dev.samplerate = LIS2DH12_POWER_DOWN;
   err_code |= lis2dh12_data_rate_set(dev_ctx, dev.samplerate);
-  RUUVI_DRIVER_ERROR_CHECK(err_code, RUUVI_DRIVER_SUCCESS);
 
   if(RUUVI_DRIVER_SUCCESS == err_code)
   {
