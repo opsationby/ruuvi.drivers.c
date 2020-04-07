@@ -228,7 +228,8 @@ ruuvi_driver_status_t ruuvi_interface_shtcx_dsp_set(uint8_t* dsp, uint8_t* param
   // Validate configuration
   if((RUUVI_DRIVER_SENSOR_CFG_DEFAULT  != *parameter
       && RUUVI_DRIVER_SENSOR_CFG_MIN   != *parameter
-      && RUUVI_DRIVER_SENSOR_CFG_MAX   != *parameter) ||
+      && RUUVI_DRIVER_SENSOR_CFG_MAX   != *parameter
+      && 1                             != *parameter) ||
       (RUUVI_DRIVER_SENSOR_DSP_LAST  != *dsp))
   {
     return RUUVI_DRIVER_ERROR_NOT_SUPPORTED;
