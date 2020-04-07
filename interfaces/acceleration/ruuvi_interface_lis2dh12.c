@@ -229,7 +229,7 @@ ruuvi_driver_status_t ruuvi_interface_lis2dh12_init(ruuvi_driver_sensor_t*
   }
   
   // do not report self-test error to upper levels, as error might be caused by user moving tag.
-  return err_code & ~~RUUVI_DRIVER_ERROR_SELFTEST;
+  return err_code & ~RUUVI_DRIVER_ERROR_SELFTEST;
 }
 
 /*
