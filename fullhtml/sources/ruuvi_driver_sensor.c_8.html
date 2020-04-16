@@ -1,0 +1,292 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>ruuvi_driver_sensor.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln2">#include &quot;ruuvi_driver_sensor.h&quot;</a>
+<a name="ln3">#include &lt;stddef.h&gt;</a>
+<a name="ln4">#include &lt;string.h&gt;</a>
+<a name="ln5"> </a>
+<a name="ln6">static const char m_init_name[] = &quot;NOTINIT&quot;;</a>
+<a name="ln7"> </a>
+<a name="ln8">rd_status_t rd_sensor_configuration_set (const rd_sensor_t *</a>
+<a name="ln9">        sensor, rd_sensor_configuration_t * config)</a>
+<a name="ln10">{</a>
+<a name="ln11">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln12"> </a>
+<a name="ln13">    if (NULL == sensor || NULL == config) { return RD_ERROR_NULL; }</a>
+<a name="ln14"> </a>
+<a name="ln15">    if (NULL == sensor-&gt;samplerate_set) { return RD_ERROR_INVALID_STATE; }</a>
+<a name="ln16"> </a>
+<a name="ln17">    uint8_t sleep = RD_SENSOR_CFG_SLEEP;</a>
+<a name="ln18">    err_code |= sensor-&gt;mode_set (&amp;sleep);</a>
+<a name="ln19">    err_code |= sensor-&gt;samplerate_set (&amp; (config-&gt;samplerate));</a>
+<a name="ln20">    err_code |= sensor-&gt;resolution_set (&amp; (config-&gt;resolution));</a>
+<a name="ln21">    err_code |= sensor-&gt;scale_set (&amp; (config-&gt;scale));</a>
+<a name="ln22">    err_code |= sensor-&gt;dsp_set (&amp; (config-&gt;dsp_function), &amp; (config-&gt;dsp_parameter));</a>
+<a name="ln23">    err_code |= sensor-&gt;mode_set (&amp; (config-&gt;mode));</a>
+<a name="ln24">    return err_code;</a>
+<a name="ln25">}</a>
+<a name="ln26"> </a>
+<a name="ln27">rd_status_t rd_sensor_configuration_get (const rd_sensor_t *</a>
+<a name="ln28">        sensor, rd_sensor_configuration_t * config)</a>
+<a name="ln29">{</a>
+<a name="ln30">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln31"> </a>
+<a name="ln32">    if (NULL == sensor || NULL == config) { return RD_ERROR_NULL; }</a>
+<a name="ln33"> </a>
+<a name="ln34">    if (NULL == sensor-&gt;samplerate_set) { return RD_ERROR_INVALID_STATE; }</a>
+<a name="ln35"> </a>
+<a name="ln36">    err_code |= sensor-&gt;samplerate_get (&amp; (config-&gt;samplerate));</a>
+<a name="ln37">    err_code |= sensor-&gt;resolution_get (&amp; (config-&gt;resolution));</a>
+<a name="ln38">    err_code |= sensor-&gt;scale_get (&amp; (config-&gt;scale));</a>
+<a name="ln39">    err_code |= sensor-&gt;dsp_get (&amp; (config-&gt;dsp_function), &amp; (config-&gt;dsp_parameter));</a>
+<a name="ln40">    err_code |= sensor-&gt;mode_get (&amp; (config-&gt;mode));</a>
+<a name="ln41">    return err_code;</a>
+<a name="ln42">}</a>
+<a name="ln43"> </a>
+<a name="ln44">static rd_sensor_timestamp_fp millis = NULL;</a>
+<a name="ln45"> </a>
+<a name="ln46">rd_status_t rd_sensor_timestamp_function_set (</a>
+<a name="ln47">    rd_sensor_timestamp_fp timestamp_fp)</a>
+<a name="ln48">{</a>
+<a name="ln49">    millis = timestamp_fp;</a>
+<a name="ln50">    return RD_SUCCESS;</a>
+<a name="ln51">}</a>
+<a name="ln52"> </a>
+<a name="ln53">// Calls the timestamp function and returns it's value. returns 0 if timestamp function is NULL</a>
+<a name="ln54">uint64_t rd_sensor_timestamp_get (void)</a>
+<a name="ln55">{</a>
+<a name="ln56">    if (NULL == millis)</a>
+<a name="ln57">    {</a>
+<a name="ln58">        return 0;</a>
+<a name="ln59">    }</a>
+<a name="ln60"> </a>
+<a name="ln61">    return millis();</a>
+<a name="ln62">}</a>
+<a name="ln63"> </a>
+<a name="ln64">bool rd_sensor_is_init (const rd_sensor_t * const sensor)</a>
+<a name="ln65">{</a>
+<a name="ln66">    return (strcmp (sensor-&gt;name, m_init_name));</a>
+<a name="ln67">}</a>
+<a name="ln68"> </a>
+<a name="ln69">static rd_status_t rd_fifo_enable_ni (const bool enable)</a>
+<a name="ln70">{</a>
+<a name="ln71">    return RD_ERROR_NOT_INITIALIZED;</a>
+<a name="ln72">}</a>
+<a name="ln73"> </a>
+<a name="ln74">static rd_status_t rd_fifo_interrupt_enable_ni (const bool enable)</a>
+<a name="ln75">{</a>
+<a name="ln76">    return RD_ERROR_NOT_INITIALIZED;</a>
+<a name="ln77">}</a>
+<a name="ln78"> </a>
+<a name="ln79">static rd_status_t rd_fifo_read_ni (size_t * num_elements, rd_sensor_data_t * data)</a>
+<a name="ln80">{</a>
+<a name="ln81">    return RD_ERROR_NOT_INITIALIZED;</a>
+<a name="ln82">}</a>
+<a name="ln83"> </a>
+<a name="ln84">static rd_status_t rd_data_get_ni (rd_sensor_data_t * const data)</a>
+<a name="ln85">{</a>
+<a name="ln86">    return RD_ERROR_NOT_INITIALIZED;</a>
+<a name="ln87">}</a>
+<a name="ln88"> </a>
+<a name="ln89">static rd_status_t rd_init_ni (rd_sensor_t * const</a>
+<a name="ln90">                               p_sensor, const rd_bus_t bus, const uint8_t handle)</a>
+<a name="ln91">{</a>
+<a name="ln92">    return RD_ERROR_NOT_INITIALIZED;</a>
+<a name="ln93">}</a>
+<a name="ln94"> </a>
+<a name="ln95">static rd_status_t rd_setup_ni (uint8_t * const value)</a>
+<a name="ln96">{</a>
+<a name="ln97">    return RD_ERROR_NOT_INITIALIZED;</a>
+<a name="ln98">}</a>
+<a name="ln99"> </a>
+<a name="ln100">static rd_status_t rd_level_interrupt_use_ni (const bool enable,</a>
+<a name="ln101">        float * limit_g)</a>
+<a name="ln102">{</a>
+<a name="ln103">    return RD_ERROR_NOT_INITIALIZED;</a>
+<a name="ln104">}</a>
+<a name="ln105"> </a>
+<a name="ln106">static rd_status_t rd_dsp_ni (uint8_t * const dsp, uint8_t * const parameter)</a>
+<a name="ln107">{</a>
+<a name="ln108">    return RD_ERROR_NOT_INITIALIZED;</a>
+<a name="ln109">}</a>
+<a name="ln110"> </a>
+<a name="ln111">static rd_status_t rd_sensor_configuration_ni (const rd_sensor_t *</a>
+<a name="ln112">        sensor, rd_sensor_configuration_t * config)</a>
+<a name="ln113">{</a>
+<a name="ln114">    return RD_ERROR_NOT_INITIALIZED;</a>
+<a name="ln115">}</a>
+<a name="ln116"> </a>
+<a name="ln117">void rd_sensor_initialize (rd_sensor_t * const p_sensor)</a>
+<a name="ln118">{</a>
+<a name="ln119">    p_sensor-&gt;name                  = m_init_name;</a>
+<a name="ln120">    p_sensor-&gt;configuration_get     = rd_sensor_configuration_ni;</a>
+<a name="ln121">    p_sensor-&gt;configuration_set     = rd_sensor_configuration_ni;</a>
+<a name="ln122">    p_sensor-&gt;data_get              = rd_data_get_ni;</a>
+<a name="ln123">    p_sensor-&gt;dsp_get               = rd_dsp_ni;</a>
+<a name="ln124">    p_sensor-&gt;dsp_set               = rd_dsp_ni;</a>
+<a name="ln125">    p_sensor-&gt;fifo_enable           = rd_fifo_enable_ni;</a>
+<a name="ln126">    p_sensor-&gt;fifo_interrupt_enable = rd_fifo_interrupt_enable_ni;</a>
+<a name="ln127">    p_sensor-&gt;fifo_read             = rd_fifo_read_ni;</a>
+<a name="ln128">    p_sensor-&gt;init                  = rd_init_ni;</a>
+<a name="ln129">    p_sensor-&gt;uninit                = rd_init_ni;</a>
+<a name="ln130">    p_sensor-&gt;level_interrupt_set   = rd_level_interrupt_use_ni;</a>
+<a name="ln131">    p_sensor-&gt;mode_get              = rd_setup_ni;</a>
+<a name="ln132">    p_sensor-&gt;mode_set              = rd_setup_ni;</a>
+<a name="ln133">    p_sensor-&gt;resolution_get        = rd_setup_ni;</a>
+<a name="ln134">    p_sensor-&gt;resolution_set        = rd_setup_ni;</a>
+<a name="ln135">    p_sensor-&gt;samplerate_get        = rd_setup_ni;</a>
+<a name="ln136">    p_sensor-&gt;samplerate_set        = rd_setup_ni;</a>
+<a name="ln137">    p_sensor-&gt;scale_get             = rd_setup_ni;</a>
+<a name="ln138">    p_sensor-&gt;scale_set             = rd_setup_ni;</a>
+<a name="ln139">    memset (&amp; (p_sensor-&gt;provides), 0, sizeof (p_sensor-&gt;provides));</a>
+<a name="ln140">}</a>
+<a name="ln141"> </a>
+<a name="ln142">void rd_sensor_uninitialize (rd_sensor_t * const p_sensor)</a>
+<a name="ln143">{</a>
+<a name="ln144">    // Reset sensor to initial values.</a>
+<a name="ln145">    rd_sensor_initialize (p_sensor);</a>
+<a name="ln146">}</a>
+<a name="ln147"> </a>
+<a name="ln148">static inline uint8_t get_index_of_field (const rd_sensor_data_t * const target,</a>
+<a name="ln149">        const rd_sensor_data_fields_t field)</a>
+<a name="ln150">{</a>
+<a name="ln151">    // Null bits higher than target</a>
+<a name="ln152">    uint32_t mask = (1 &lt;&lt; (32 - __builtin_clz (field.bitfield))) - 1;</a>
+<a name="ln153">    // Count set bits in nulled bitfield to find index.</a>
+<a name="ln154">    return __builtin_popcount (target-&gt;fields.bitfield &amp; mask) - 1;</a>
+<a name="ln155">}</a>
+<a name="ln156"> </a>
+<a name="ln157">float rd_sensor_data_parse (const rd_sensor_data_t * const provided,</a>
+<a name="ln158">                            const rd_sensor_data_fields_t requested)</a>
+<a name="ln159">{</a>
+<a name="ln160">    // If there isn't valid requested data, return value &quot;invalid&quot;.</a>
+<a name="ln161">    if (! (provided-&gt;valid.bitfield &amp; requested.bitfield)) { return RD_FLOAT_INVALID; }</a>
+<a name="ln162"> </a>
+<a name="ln163">    // If trying to get more than one field, return value &quot;invalid&quot;.</a>
+<a name="ln164">    if (1 != __builtin_popcount (requested.bitfield)) { return RD_FLOAT_INVALID; }</a>
+<a name="ln165"> </a>
+<a name="ln166">    // Return requested value</a>
+<a name="ln167">    return provided-&gt;data[get_index_of_field (provided, requested)];</a>
+<a name="ln168">}</a>
+<a name="ln169"> </a>
+<a name="ln170">void rd_sensor_data_set (rd_sensor_data_t * const target,</a>
+<a name="ln171">                         const rd_sensor_data_fields_t field,</a>
+<a name="ln172">                         const float value)</a>
+<a name="ln173">{</a>
+<a name="ln174">    // If there isn't valid requested data, return</a>
+<a name="ln175">    if (! (target-&gt;fields.bitfield &amp; field.bitfield)) { return; }</a>
+<a name="ln176"> </a>
+<a name="ln177">    // If trying to set more than one field, return.</a>
+<a name="ln178">    if (1 != __builtin_popcount (field.bitfield)) { return; }</a>
+<a name="ln179"> </a>
+<a name="ln180">    // Set value to appropriate index</a>
+<a name="ln181">    target-&gt;data[get_index_of_field (target, field)] = value;</a>
+<a name="ln182">    // Mark data as valid</a>
+<a name="ln183">    target-&gt;valid.bitfield |= field.bitfield;</a>
+<a name="ln184">}</a>
+<a name="ln185"> </a>
+<a name="ln186">void rd_sensor_data_populate (rd_sensor_data_t * const target,</a>
+<a name="ln187">                              const rd_sensor_data_t * const provided,</a>
+<a name="ln188">                              const rd_sensor_data_fields_t requested)</a>
+<a name="ln189">{</a>
+<a name="ln190">    if (NULL == target || NULL == provided) { return; }</a>
+<a name="ln191"> </a>
+<a name="ln192">    // Compare provided data to requested data.</a>
+<a name="ln193">    rd_sensor_data_fields_t available = {.bitfield = (provided-&gt;valid).bitfield &amp; requested.bitfield};</a>
+<a name="ln194"> </a>
+<a name="ln195">    // We have the available, requested fields. Fill the target struct with those</a>
+<a name="ln196">    while (available.bitfield)</a>
+<a name="ln197">    {</a>
+<a name="ln198">        // read rightmost field</a>
+<a name="ln199">        rd_sensor_data_fields_t next = {.bitfield = (1 &lt;&lt; __builtin_ctz (available.bitfield)) };</a>
+<a name="ln200">        float value = rd_sensor_data_parse (provided, next);</a>
+<a name="ln201">        rd_sensor_data_set (target, next, value);</a>
+<a name="ln202">        available.bitfield &amp;= (available.bitfield - 1); // set rightmost bit of available to 0</a>
+<a name="ln203">    }</a>
+<a name="ln204">}</a>
+<a name="ln205"> </a>
+<a name="ln206">inline uint8_t rd_sensor_data_fieldcount (const rd_sensor_data_t * const target)</a>
+<a name="ln207">{</a>
+<a name="ln208">    return __builtin_popcount (target-&gt;fields.bitfield);</a>
+<a name="ln209">}</a>
+
+</code></pre>
+<div class="balloon" rel="13"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="15"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="8"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="32"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="34"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="27"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="54"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="71"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="76"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="81"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="79"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'data'.</p></div>
+<div class="balloon" rel="79"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'num_elements'.</p></div>
+<div class="balloon" rel="86"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="92"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="89"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'bus'.</p></div>
+<div class="balloon" rel="89"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'handle'.</p></div>
+<div class="balloon" rel="89"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'p_sensor'.</p></div>
+<div class="balloon" rel="97"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="103"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="100"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'enable'.</p></div>
+<div class="balloon" rel="100"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'limit_g'.</p></div>
+<div class="balloon" rel="108"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="106"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'dsp'.</p></div>
+<div class="balloon" rel="106"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'parameter'.</p></div>
+<div class="balloon" rel="114"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="111"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'config'.</p></div>
+<div class="balloon" rel="111"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2537/" target="_blank">V2537</a> Functions should not have unused parameters. Consider inspecting the parameter: 'sensor'.</p></div>
+<div class="balloon" rel="152"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left and right operands of the '<<' operator should not have essential 'signed' and 'signed' types respectively. Consider inspecting operands: left - '1', right - '(32 - __builtin_clz(field.bitfield))'</p></div>
+<div class="balloon" rel="152"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2572/" target="_blank">V2572</a> Value of the expression should not be converted from the essential 'signed' type to the essential 'unsigned' type.</p></div>
+<div class="balloon" rel="161"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> Operand of the '!' operator should have an appropriate essential type.</p></div>
+<div class="balloon" rel="161"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2570/" target="_blank">V2570</a> Operands of the '!' operator should have bool essential type.</p></div>
+<div class="balloon" rel="157"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="175"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> Operand of the '!' operator should have an appropriate essential type.</p></div>
+<div class="balloon" rel="175"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2570/" target="_blank">V2570</a> Operands of the '!' operator should have bool essential type.</p></div>
+<div class="balloon" rel="170"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> A function should have a single point of exit at the end.</p></div>
+<div class="balloon" rel="199"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left and right operands of the '<<' operator should not have essential 'signed' and 'signed' types respectively. Consider inspecting operands: left - '1', right - '__builtin_ctz(available.bitfield)'</p></div>
+<div class="balloon" rel="202"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '-' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="186"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> The 'return' statement should be the last statement of a function.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

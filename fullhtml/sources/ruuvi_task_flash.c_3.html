@@ -1,0 +1,273 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>ruuvi_task_flash.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">/**</a>
+<a name="ln2"> * @addtogroup flash_tasks</a>
+<a name="ln3"> */</a>
+<a name="ln4">/*@{*/</a>
+<a name="ln5">/**</a>
+<a name="ln6"> * @file task_flash.c</a>
+<a name="ln7"> * @author Otso Jousimaa &lt;otso@ojousima.net&gt;</a>
+<a name="ln8"> * @copyright 2019 Ruuvi Innovations Ltd, license BSD-3-Clause.</a>
+<a name="ln9"> * @date 2019-11-18 provide compile time choice incase no flash is available</a>
+<a name="ln10"> * This module has 2 sets of code:</a>
+<a name="ln11"> *  If flash is enabled:</a>
+<a name="ln12"> *    on_error: In the event of a fatal error, the error, source file and line number are stored in an error file in flash.</a>
+<a name="ln13"> *              Then calls the bootloader, failing that reset.</a>
+<a name="ln14"> *    task_flash_init: calls print_error_cause which retrieves error file from flash and logs it(requires nRF52 DK board).</a>
+<a name="ln15"> *              Then sets up on_error as the call back error handler.</a>
+<a name="ln16"> *  If no flash:</a>
+<a name="ln17"> *    on_error: In the event of a fatal error calls the bootloader, failing that reset.</a>
+<a name="ln18"> *    task_flash_init: sets up on_error as the call back error handler.</a>
+<a name="ln19"> * These are in addition to flash utility functions of load, free, is busy and gc_run(which yields until not busy)</a>
+<a name="ln20"> */</a>
+<a name="ln21"> </a>
+<a name="ln22">#include &quot;ruuvi_driver_enabled_modules.h&quot;</a>
+<a name="ln23">#if RT_FLASH_ENABLED</a>
+<a name="ln24">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln25">#include &quot;ruuvi_driver_sensor.h&quot;</a>
+<a name="ln26">#include &quot;ruuvi_interface_flash.h&quot;</a>
+<a name="ln27">#include &quot;ruuvi_interface_log.h&quot;</a>
+<a name="ln28">#include &quot;ruuvi_interface_power.h&quot;</a>
+<a name="ln29">#include &quot;ruuvi_interface_yield.h&quot;</a>
+<a name="ln30">#include &quot;ruuvi_task_flash.h&quot;</a>
+<a name="ln31"> </a>
+<a name="ln32">#include &lt;stddef.h&gt;</a>
+<a name="ln33">#include &lt;stdio.h&gt;</a>
+<a name="ln34">#include &lt;string.h&gt;</a>
+<a name="ln35">#include &lt;inttypes.h&gt;</a>
+<a name="ln36"> </a>
+<a name="ln37">#ifndef TASK_FLASH_LOG_LEVEL</a>
+<a name="ln38">#define TASK_FLASH_LOG_LEVEL RI_LOG_LEVEL_INFO</a>
+<a name="ln39">#endif</a>
+<a name="ln40"> </a>
+<a name="ln41">#ifndef RT_FLASH_ERROR_FILE</a>
+<a name="ln42">#  define RT_FLASH_ERROR_FILE 0xBFFE</a>
+<a name="ln43">#endif</a>
+<a name="ln44"> </a>
+<a name="ln45">#ifndef RT_FLASH_ERROR_RECORD</a>
+<a name="ln46">#  define RT_FLASH_ERROR_RECORD 0xBFFE</a>
+<a name="ln47">#endif</a>
+<a name="ln48"> </a>
+<a name="ln49">#define LOG(msg) ri_log(TASK_FLASH_LOG_LEVEL, msg)</a>
+<a name="ln50">#define LOGD(msg) ri_log(RI_LOG_DEBUG, msg)</a>
+<a name="ln51">#define LOGW(msg) ri_log(RI_LOG_WARNING, msg)</a>
+<a name="ln52">#define LOGHEX(msg, len) ri_log_hex(TASK_FLASH_LOG_LEVEL, msg, len)</a>
+<a name="ln53"> </a>
+<a name="ln54">typedef struct</a>
+<a name="ln55">{</a>
+<a name="ln56">    rd_status_t error;</a>
+<a name="ln57">    char filename[32];</a>
+<a name="ln58">    int line;</a>
+<a name="ln59">} rt_flash_error_cause_t;</a>
+<a name="ln60"> </a>
+<a name="ln61">#if 0</a>
+<a name="ln62">static void on_error (const rd_status_t err,</a>
+<a name="ln63">                      const bool fatal,</a>
+<a name="ln64">                      const char * file,</a>
+<a name="ln65">                      const int line)</a>
+<a name="ln66">{</a>
+<a name="ln67">    if (!fatal)</a>
+<a name="ln68">    {</a>
+<a name="ln69">        return;</a>
+<a name="ln70">    }</a>
+<a name="ln71"> </a>
+<a name="ln72">    error_cause_t error = {.error = err, .line = line };</a>
+<a name="ln73">    rd_status_t err_code;</a>
+<a name="ln74">    uint32_t timeout = 0;</a>
+<a name="ln75">    strncpy (error.filename, file, sizeof (error.filename));</a>
+<a name="ln76">    // Store reason of fatal error</a>
+<a name="ln77">    err_code = rt_flash_store (APPLICATION_FLASH_ERROR_FILE,</a>
+<a name="ln78">                               APPLICATION_FLASH_ERROR_RECORD,</a>
+<a name="ln79">                               &amp;error, sizeof (error));</a>
+<a name="ln80"> </a>
+<a name="ln81">    // Wait for flash store op to complete</a>
+<a name="ln82">    while (RD_SUCCESS == err_code &amp;&amp;</a>
+<a name="ln83">            timeout &lt; 1000 &amp;&amp;</a>
+<a name="ln84">            ri_flash_is_busy())</a>
+<a name="ln85">    {</a>
+<a name="ln86">        timeout++;</a>
+<a name="ln87">        // Use microsecond wait to busyloop instead of millisecond wait to low-power sleep</a>
+<a name="ln88">        // as low-power sleep may hang on interrupt context.</a>
+<a name="ln89">        ri_delay_us (1000);</a>
+<a name="ln90">    }</a>
+<a name="ln91"> </a>
+<a name="ln92">    // Try to enter bootloader, if that fails reset.</a>
+<a name="ln93">    ri_power_enter_bootloader();</a>
+<a name="ln94">    ri_power_reset();</a>
+<a name="ln95">}</a>
+<a name="ln96">#endif</a>
+<a name="ln97"> </a>
+<a name="ln98">#ifndef CEEDLING</a>
+<a name="ln99">static</a>
+<a name="ln100">#endif</a>
+<a name="ln101">void print_error_cause (void)</a>
+<a name="ln102">{</a>
+<a name="ln103">    rt_flash_error_cause_t error;</a>
+<a name="ln104">    uint32_t timeout = 0;</a>
+<a name="ln105">    rd_status_t err_code;</a>
+<a name="ln106">    err_code = rt_flash_load (RT_FLASH_ERROR_FILE,</a>
+<a name="ln107">                              RT_FLASH_ERROR_RECORD,</a>
+<a name="ln108">                              &amp;error, sizeof (error));</a>
+<a name="ln109"> </a>
+<a name="ln110">    if (RD_SUCCESS == err_code)</a>
+<a name="ln111">    {</a>
+<a name="ln112">        char error_str[128];</a>
+<a name="ln113">        size_t index = 0;</a>
+<a name="ln114">        index += snprintf (error_str, sizeof (error_str), &quot;Previous fatal error: %s:%d: &quot;,</a>
+<a name="ln115">                           error.filename, error.line);</a>
+<a name="ln116">        index += ri_error_to_string (error.error, error_str + index,</a>
+<a name="ln117">                                     sizeof (error_str) - index);</a>
+<a name="ln118">        snprintf (error_str + index,  sizeof (error_str) - index, &quot;\r\n&quot;);</a>
+<a name="ln119">        LOG (error_str);</a>
+<a name="ln120">    }</a>
+<a name="ln121">}</a>
+<a name="ln122"> </a>
+<a name="ln123">rd_status_t rt_flash_init (void)</a>
+<a name="ln124">{</a>
+<a name="ln125">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln126">    err_code |= ri_flash_init();</a>
+<a name="ln127"> </a>
+<a name="ln128">    // Error on flash? purge, reboot</a>
+<a name="ln129">    if (RD_SUCCESS != err_code)</a>
+<a name="ln130">    {</a>
+<a name="ln131">        ri_flash_purge();</a>
+<a name="ln132">        ri_power_reset();</a>
+<a name="ln133">        // Stop test execution here.</a>
+<a name="ln134">#       ifdef CEEDLING</a>
+<a name="ln135">        return err_code;</a>
+<a name="ln136">#       endif</a>
+<a name="ln137">    }</a>
+<a name="ln138"> </a>
+<a name="ln139">    // Print previous fatal error</a>
+<a name="ln140">    print_error_cause();</a>
+<a name="ln141">    return err_code;</a>
+<a name="ln142">}</a>
+<a name="ln143"> </a>
+<a name="ln144">rd_status_t rt_flash_store (const uint16_t page_id, const uint16_t record_id,</a>
+<a name="ln145">                            const void * const message, const size_t message_length)</a>
+<a name="ln146">{</a>
+<a name="ln147">    rd_status_t status = RD_SUCCESS;</a>
+<a name="ln148">    status = ri_flash_record_set (page_id, record_id, message_length, message);</a>
+<a name="ln149"> </a>
+<a name="ln150">    if (RD_ERROR_NO_MEM == status)</a>
+<a name="ln151">    {</a>
+<a name="ln152">        ri_flash_gc_run();</a>
+<a name="ln153"> </a>
+<a name="ln154">        while (rt_flash_busy())</a>
+<a name="ln155">        {</a>
+<a name="ln156">            ri_yield();</a>
+<a name="ln157">        }</a>
+<a name="ln158"> </a>
+<a name="ln159">        status = ri_flash_record_set (page_id, record_id, message_length, message);</a>
+<a name="ln160">    }</a>
+<a name="ln161"> </a>
+<a name="ln162">    return status;</a>
+<a name="ln163">}</a>
+<a name="ln164"> </a>
+<a name="ln165">rd_status_t rt_flash_load (const uint16_t page_id, const uint16_t record_id,</a>
+<a name="ln166">                           void * const message, const size_t message_length)</a>
+<a name="ln167">{</a>
+<a name="ln168">    return ri_flash_record_get (page_id, record_id, message_length, message);</a>
+<a name="ln169">}</a>
+<a name="ln170"> </a>
+<a name="ln171">rd_status_t rt_flash_free (const uint16_t file_id, const uint16_t record_id)</a>
+<a name="ln172">{</a>
+<a name="ln173">    return ri_flash_record_delete (file_id, record_id);</a>
+<a name="ln174">}</a>
+<a name="ln175"> </a>
+<a name="ln176">rd_status_t rt_flash_gc_run (void)</a>
+<a name="ln177">{</a>
+<a name="ln178">    return ri_flash_gc_run();</a>
+<a name="ln179">}</a>
+<a name="ln180"> </a>
+<a name="ln181">bool rt_flash_busy (void)</a>
+<a name="ln182">{</a>
+<a name="ln183">    return ri_flash_is_busy();</a>
+<a name="ln184">}</a>
+<a name="ln185"> </a>
+<a name="ln186"> </a>
+<a name="ln187"> </a>
+<a name="ln188">#else</a>
+<a name="ln189"> </a>
+<a name="ln190">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln191">#include &lt;stdlib.h&gt;</a>
+<a name="ln192">rd_status_t rt_flash_init (void)</a>
+<a name="ln193">{</a>
+<a name="ln194">    // Setup error reset</a>
+<a name="ln195">    return RD_SUCCESS;</a>
+<a name="ln196">}</a>
+<a name="ln197"> </a>
+<a name="ln198">rd_status_t rt_flash_store (const uint16_t file_id, const uint16_t record_id,</a>
+<a name="ln199">                            const void * const message, const size_t message_length)</a>
+<a name="ln200">{</a>
+<a name="ln201">    return RD_SUCCESS;</a>
+<a name="ln202">}</a>
+<a name="ln203"> </a>
+<a name="ln204">rd_status_t rt_flash_load (const uint16_t page_id, const uint16_t record_id,</a>
+<a name="ln205">                           void * const message, const size_t message_length)</a>
+<a name="ln206">{</a>
+<a name="ln207">    return RD_ERROR_NOT_FOUND;</a>
+<a name="ln208">}</a>
+<a name="ln209"> </a>
+<a name="ln210">bool rt_flash_busy (void)</a>
+<a name="ln211">{</a>
+<a name="ln212">    return false;</a>
+<a name="ln213">}</a>
+<a name="ln214">#endif</a>
+<a name="ln215">/*@}*/</a>
+
+</code></pre>
+<div class="balloon" rel="108"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2572/" target="_blank">V2572</a> The value of the 'sizeof (error)' expression should not be converted to the narrower essential 'unsigned' type.</p></div>
+<div class="balloon" rel="110"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '==' operator should have the same essential type. The current types are: 'signed' and 'unsigned'.</p></div>
+<div class="balloon" rel="114"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2572/" target="_blank">V2572</a> Value of the expression should not be converted from the essential 'signed' type to the essential 'unsigned' type.</p></div>
+<div class="balloon" rel="114"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '+=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="116"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2562/" target="_blank">V2562</a> Expressions with pointer type should not be used in the '+', '-', '+=' and '-=' operations.</p></div>
+<div class="balloon" rel="117"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2572/" target="_blank">V2572</a> The value of the 'sizeof (error_str) - index' expression should not be converted to the narrower essential 'unsigned' type.</p></div>
+<div class="balloon" rel="118"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2562/" target="_blank">V2562</a> Expressions with pointer type should not be used in the '+', '-', '+=' and '-=' operations.</p></div>
+<div class="balloon" rel="129"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '!=' operator should have the same essential type. The current types are: 'signed' and 'unsigned'.</p></div>
+<div class="balloon" rel="148"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2572/" target="_blank">V2572</a> The value of the 'message_length' expression should not be converted to the narrower essential 'unsigned' type.</p></div>
+<div class="balloon" rel="150"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="150"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '==' operator should have the same essential type. The current types are: 'signed' and 'unsigned'.</p></div>
+<div class="balloon" rel="159"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2572/" target="_blank">V2572</a> The value of the 'message_length' expression should not be converted to the narrower essential 'unsigned' type.</p></div>
+<div class="balloon" rel="168"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2572/" target="_blank">V2572</a> The value of the 'message_length' expression should not be converted to the narrower essential 'unsigned' type.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

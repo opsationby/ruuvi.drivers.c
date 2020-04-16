@@ -1,0 +1,157 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>ruuvi_driver_error.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">/**</a>
+<a name="ln2"> * @addtogroup Error</a>
+<a name="ln3"> * @{</a>
+<a name="ln4"> */</a>
+<a name="ln5">/**</a>
+<a name="ln6"> * @file ruuvi_driver_error.c</a>
+<a name="ln7"> * @author Otso Jousimaa</a>
+<a name="ln8"> * @date 2019-01-31</a>
+<a name="ln9"> * @copyright Ruuvi Innovations Ltd, license BSD-3-Clause</a>
+<a name="ln10"> * @brief Check given error code, log warning on non-fatal error and reset on fatal error</a>
+<a name="ln11"> *</a>
+<a name="ln12"> */</a>
+<a name="ln13">#include &quot;ruuvi_driver_enabled_modules.h&quot;</a>
+<a name="ln14"> </a>
+<a name="ln15">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln16">#include &quot;ruuvi_interface_log.h&quot;</a>
+<a name="ln17"> </a>
+<a name="ln18">#include &lt;stdio.h&gt;</a>
+<a name="ln19">#include &lt;string.h&gt;</a>
+<a name="ln20"> </a>
+<a name="ln21">/** Store all occured errors until errors are checked by application here */</a>
+<a name="ln22">static rd_status_t m_errors = RD_SUCCESS;</a>
+<a name="ln23"> </a>
+<a name="ln24">/** Application callback on errors **/</a>
+<a name="ln25">static rd_error_cb m_cb;</a>
+<a name="ln26"> </a>
+<a name="ln27">void rd_error_check (rd_status_t error,</a>
+<a name="ln28">                     rd_status_t non_fatal_mask, const char * file, int line)</a>
+<a name="ln29">{</a>
+<a name="ln30">    // Do nothing on success</a>
+<a name="ln31">    if (RD_SUCCESS == error) { return; }</a>
+<a name="ln32"> </a>
+<a name="ln33">    m_errors |= error;</a>
+<a name="ln34">    char message[RD_LOG_BUFFER_SIZE];</a>
+<a name="ln35">    size_t index = 0;</a>
+<a name="ln36">    bool fatal = ~non_fatal_mask &amp; error;</a>
+<a name="ln37">    // Cut out the full path</a>
+<a name="ln38">    const char * filename = strrchr (file, '/');</a>
+<a name="ln39"> </a>
+<a name="ln40">    // If on Windows</a>
+<a name="ln41">    if (NULL == filename) { filename = strrchr (file, '\\'); }</a>
+<a name="ln42"> </a>
+<a name="ln43">    // In case the file was already only the name</a>
+<a name="ln44">    if (NULL == filename) { filename = file; }</a>
+<a name="ln45">    // Otherwise skip the slash</a>
+<a name="ln46">    else { filename++; }</a>
+<a name="ln47"> </a>
+<a name="ln48">    // Reset on fatal error</a>
+<a name="ln49">    if (fatal)</a>
+<a name="ln50">    {</a>
+<a name="ln51">        index += snprintf (message, sizeof (message), &quot;%s:%d FATAL: &quot;, filename, line);</a>
+<a name="ln52">        index += ri_error_to_string (error, (message + index),</a>
+<a name="ln53">                                     (sizeof (message) - index));</a>
+<a name="ln54">        snprintf ( (message + index), (sizeof (message) - index), &quot;\r\n&quot;);</a>
+<a name="ln55">        ri_log_flush();</a>
+<a name="ln56">        ri_log (RI_LOG_LEVEL_ERROR, message);</a>
+<a name="ln57">        ri_log_flush();</a>
+<a name="ln58">    }</a>
+<a name="ln59">    // Log non-fatal errors</a>
+<a name="ln60">    else if (RD_SUCCESS != error)</a>
+<a name="ln61">    {</a>
+<a name="ln62">        index += snprintf (message, sizeof (message), &quot;%s:%d WARNING: &quot;, filename, line);</a>
+<a name="ln63">        index += ri_error_to_string (error, (message + index),</a>
+<a name="ln64">                                     (sizeof (message) - index));</a>
+<a name="ln65">        snprintf ( (message + index), (sizeof (message) - index), &quot;\r\n&quot;);</a>
+<a name="ln66">        ri_log (RI_LOG_LEVEL_WARNING, message);</a>
+<a name="ln67">    }</a>
+<a name="ln68"> </a>
+<a name="ln69">    // Call error callback</a>
+<a name="ln70">    if (RD_SUCCESS != error &amp;&amp; NULL != m_cb)</a>
+<a name="ln71">    {</a>
+<a name="ln72">        m_cb (error, fatal, filename, line);</a>
+<a name="ln73">    }</a>
+<a name="ln74">}</a>
+<a name="ln75"> </a>
+<a name="ln76">/*</a>
+<a name="ln77"> * @brief reset global error flags and return their value.</a>
+<a name="ln78"> *</a>
+<a name="ln79"> * @return errors occured after last call to this function.</a>
+<a name="ln80"> */</a>
+<a name="ln81">rd_status_t rd_errors_clear()</a>
+<a name="ln82">{</a>
+<a name="ln83">    rd_status_t errors = m_errors;</a>
+<a name="ln84">    m_errors = RD_SUCCESS;</a>
+<a name="ln85">    return errors;</a>
+<a name="ln86">}</a>
+<a name="ln87"> </a>
+<a name="ln88">void rd_error_cb_set (rd_error_cb cb)</a>
+<a name="ln89">{</a>
+<a name="ln90">    m_cb = cb;</a>
+<a name="ln91">}</a>
+<a name="ln92"> </a>
+<a name="ln93">/** @} */</a>
+
+</code></pre>
+<div class="balloon" rel="31"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '==' operator should have the same essential type. The current types are: 'signed' and 'unsigned'.</p></div>
+<div class="balloon" rel="36"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2572/" target="_blank">V2572</a> The value of the '~non_fatal_mask & error' expression should not be converted from the essential 'unsigned' type to the essential 'Boolean' type.</p></div>
+<div class="balloon" rel="51"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2572/" target="_blank">V2572</a> Value of the expression should not be converted from the essential 'signed' type to the essential 'unsigned' type.</p></div>
+<div class="balloon" rel="51"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '+=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="52"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2562/" target="_blank">V2562</a> Expressions with pointer type should not be used in the '+', '-', '+=' and '-=' operations.</p></div>
+<div class="balloon" rel="53"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2572/" target="_blank">V2572</a> The value of the '(sizeof (message) - index)' expression should not be converted to the narrower essential 'unsigned' type.</p></div>
+<div class="balloon" rel="54"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2562/" target="_blank">V2562</a> Expressions with pointer type should not be used in the '+', '-', '+=' and '-=' operations.</p></div>
+<div class="balloon" rel="60"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '!=' operator should have the same essential type. The current types are: 'signed' and 'unsigned'.</p></div>
+<div class="balloon" rel="62"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2572/" target="_blank">V2572</a> Value of the expression should not be converted from the essential 'signed' type to the essential 'unsigned' type.</p></div>
+<div class="balloon" rel="62"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '+=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="63"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2562/" target="_blank">V2562</a> Expressions with pointer type should not be used in the '+', '-', '+=' and '-=' operations.</p></div>
+<div class="balloon" rel="64"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2572/" target="_blank">V2572</a> The value of the '(sizeof (message) - index)' expression should not be converted to the narrower essential 'unsigned' type.</p></div>
+<div class="balloon" rel="65"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2562/" target="_blank">V2562</a> Expressions with pointer type should not be used in the '+', '-', '+=' and '-=' operations.</p></div>
+<div class="balloon" rel="60"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v547/" target="_blank">V547</a> Expression '0 != error' is always true.</p></div>
+<div class="balloon" rel="60"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2516/" target="_blank">V2516</a> The 'if' ... 'else if' construct should be terminated with an 'else' statement.</p></div>
+<div class="balloon" rel="70"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '!=' operator should have the same essential type. The current types are: 'signed' and 'unsigned'.</p></div>
+<div class="balloon" rel="70"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v560/" target="_blank">V560</a> A part of conditional expression is always true: 0 != error.</p></div>
+<div class="balloon" rel="27"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2506/" target="_blank">V2506</a> The 'return' statement should be the last statement of a function.</p></div>
+<div class="balloon" rel="84"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

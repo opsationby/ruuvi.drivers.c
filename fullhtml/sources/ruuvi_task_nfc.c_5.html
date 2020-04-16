@@ -1,0 +1,400 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>ruuvi_task_nfc.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">/**</a>
+<a name="ln2"> * @addtogroup nfc_tasks</a>
+<a name="ln3"> */</a>
+<a name="ln4">/*@{*/</a>
+<a name="ln5">/**</a>
+<a name="ln6"> * @file task_nfc.c</a>
+<a name="ln7"> * @author Otso Jousimaa &lt;otso@ojousima.net&gt;</a>
+<a name="ln8"> * @date 2020-02-21</a>
+<a name="ln9"> * @copyright Ruuvi Innovations Ltd, license BSD-3-Clause.</a>
+<a name="ln10"> </a>
+<a name="ln11"> * When NFC reader is in range return 4 UTF-textfields with content</a>
+<a name="ln12"> * @code</a>
+<a name="ln13"> * SW: version</a>
+<a name="ln14"> * MAC: AA:BB:CC:DD:EE:FF</a>
+<a name="ln15"> * ID: 00:11:22:33:44:55:66:77</a>
+<a name="ln16"> * Data:</a>
+<a name="ln17"> * @endcode</a>
+<a name="ln18"> */</a>
+<a name="ln19">#include &quot;ruuvi_driver_enabled_modules.h&quot;</a>
+<a name="ln20">#if RT_NFC_ENABLED</a>
+<a name="ln21">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln22">#include &quot;ruuvi_interface_atomic.h&quot;</a>
+<a name="ln23">#include &quot;ruuvi_interface_communication_nfc.h&quot;</a>
+<a name="ln24">#include &quot;ruuvi_interface_communication.h&quot;</a>
+<a name="ln25">#include &quot;ruuvi_interface_scheduler.h&quot;</a>
+<a name="ln26">#include &quot;ruuvi_interface_watchdog.h&quot;</a>
+<a name="ln27">#include &quot;ruuvi_task_nfc.h&quot;</a>
+<a name="ln28">#include &lt;stdio.h&gt;</a>
+<a name="ln29">#include &lt;string.h&gt;</a>
+<a name="ln30"> </a>
+<a name="ln31">static ri_comm_channel_t m_channel;   //!&lt; Handle for NFC comms.</a>
+<a name="ln32">static ri_comm_cb_t m_on_connected;    //!&lt; Callback for connection established.</a>
+<a name="ln33">static ri_comm_cb_t m_on_disconnected; //!&lt; Callback for connection lost.</a>
+<a name="ln34">static ri_comm_cb_t m_on_received;     //!&lt; Callback for data received.</a>
+<a name="ln35">static ri_comm_cb_t m_on_sent;         //!&lt; Callback for data sent.</a>
+<a name="ln36">static bool m_nfc_is_connected;        //!&lt; True while NFC reader is present.</a>
+<a name="ln37">static bool m_nfc_is_initialized;      //!&lt; True while NFC is initialized.</a>
+<a name="ln38"> </a>
+<a name="ln39">/**</a>
+<a name="ln40"> * @brief Event handler for NFC events</a>
+<a name="ln41"> *</a>
+<a name="ln42"> * This function is called in interrupt context, which allows for real-time processing</a>
+<a name="ln43"> * such as feeding softdevice data buffers during connection event.</a>
+<a name="ln44"> * Care must be taken to not call any function which requires external peripherals,</a>
+<a name="ln45"> * such as sensors in this context.</a>
+<a name="ln46"> *</a>
+<a name="ln47"> * If sensors must be read / configured as a response to NFC event, schedule</a>
+<a name="ln48"> * the action and send the results back during next connection event by buffering</a>
+<a name="ln49"> * the response with rt_nfc_send.</a>
+<a name="ln50"> *</a>
+<a name="ln51"> * @param evt Event type</a>
+<a name="ln52"> * @param p_data pointer to event data, if event is</a>
+<a name="ln53"> *               @c RI_COMMUNICATION_RECEIVED received data, NULL otherwise.</a>
+<a name="ln54"> * @param data_len number of bytes in received data, 0 if p_data is NULL.</a>
+<a name="ln55"> *</a>
+<a name="ln56"> */</a>
+<a name="ln57">#ifndef CEEDLING</a>
+<a name="ln58">static</a>
+<a name="ln59">#endif</a>
+<a name="ln60">rd_status_t rt_nfc_isr (ri_comm_evt_t evt, void * p_data, size_t data_len)</a>
+<a name="ln61">{</a>
+<a name="ln62">    switch (evt)</a>
+<a name="ln63">    {</a>
+<a name="ln64">        // Note: This gets called only after the NFC notifications have been registered.</a>
+<a name="ln65">        case RI_COMM_CONNECTED:</a>
+<a name="ln66">            m_nfc_is_connected = true;</a>
+<a name="ln67">            (NULL != m_on_connected) ? m_on_connected (p_data, data_len) : false;</a>
+<a name="ln68">            break;</a>
+<a name="ln69"> </a>
+<a name="ln70">        case RI_COMM_DISCONNECTED:</a>
+<a name="ln71">            m_nfc_is_connected = false;</a>
+<a name="ln72">            (NULL != m_on_disconnected) ? m_on_disconnected (p_data, data_len) : false;</a>
+<a name="ln73">            break;</a>
+<a name="ln74"> </a>
+<a name="ln75">        case RI_COMM_SENT:</a>
+<a name="ln76">            (NULL != m_on_sent) ? m_on_sent (p_data, data_len) : false;</a>
+<a name="ln77">            break;</a>
+<a name="ln78"> </a>
+<a name="ln79">        case RI_COMM_RECEIVED:</a>
+<a name="ln80">            (NULL != m_on_received) ? m_on_received (p_data, data_len) : false;</a>
+<a name="ln81">            break;</a>
+<a name="ln82"> </a>
+<a name="ln83">        default:</a>
+<a name="ln84">            break;</a>
+<a name="ln85">    }</a>
+<a name="ln86"> </a>
+<a name="ln87">    return RD_SUCCESS;</a>
+<a name="ln88">}</a>
+<a name="ln89"> </a>
+<a name="ln90">#ifndef CEEDLING</a>
+<a name="ln91">static</a>
+<a name="ln92">#endif</a>
+<a name="ln93">rd_status_t sw_set (const char * const sw)</a>
+<a name="ln94">{</a>
+<a name="ln95">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln96">    int written = 0;</a>
+<a name="ln97"> </a>
+<a name="ln98">    if (NULL == sw)</a>
+<a name="ln99">    {</a>
+<a name="ln100">        err_code |= RD_ERROR_NULL;</a>
+<a name="ln101">    }</a>
+<a name="ln102">    else</a>
+<a name="ln103">    {</a>
+<a name="ln104">        uint8_t fw_string[RI_COMM_DIS_STRLEN] = { 0 };</a>
+<a name="ln105">        written = snprintf ( (char *) fw_string,</a>
+<a name="ln106">                             RI_COMM_DIS_STRLEN,</a>
+<a name="ln107">                             &quot;SW: %s&quot;,</a>
+<a name="ln108">                             sw);</a>
+<a name="ln109"> </a>
+<a name="ln110">        if ( (0 &gt; written)</a>
+<a name="ln111">                || (RI_COMM_DIS_STRLEN &lt;= written))</a>
+<a name="ln112">        {</a>
+<a name="ln113">            err_code |= RD_ERROR_INVALID_LENGTH;</a>
+<a name="ln114">        }</a>
+<a name="ln115">        else</a>
+<a name="ln116">        {</a>
+<a name="ln117">            err_code |= ri_nfc_fw_version_set (fw_string,</a>
+<a name="ln118">                                               strlen ( (char *) fw_string));</a>
+<a name="ln119">        }</a>
+<a name="ln120">    }</a>
+<a name="ln121"> </a>
+<a name="ln122">    return err_code;</a>
+<a name="ln123">}</a>
+<a name="ln124"> </a>
+<a name="ln125">#ifndef CEEDLING</a>
+<a name="ln126">static</a>
+<a name="ln127">#endif</a>
+<a name="ln128">rd_status_t mac_set (const char * const mac)</a>
+<a name="ln129">{</a>
+<a name="ln130">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln131">    int written = 0;</a>
+<a name="ln132"> </a>
+<a name="ln133">    if (NULL == mac)</a>
+<a name="ln134">    {</a>
+<a name="ln135">        err_code |= RD_ERROR_NULL;</a>
+<a name="ln136">    }</a>
+<a name="ln137">    else</a>
+<a name="ln138">    {</a>
+<a name="ln139">        uint8_t name[RI_COMM_DIS_STRLEN] = { 0 };</a>
+<a name="ln140">        written = snprintf ( (char *) name,</a>
+<a name="ln141">                             RI_COMM_DIS_STRLEN,</a>
+<a name="ln142">                             &quot;MAC: %s&quot;,</a>
+<a name="ln143">                             mac);</a>
+<a name="ln144"> </a>
+<a name="ln145">        if ( (0 &gt; written)</a>
+<a name="ln146">                || (RI_COMM_DIS_STRLEN &lt;= written))</a>
+<a name="ln147">        {</a>
+<a name="ln148">            err_code |= RD_ERROR_INVALID_LENGTH;</a>
+<a name="ln149">        }</a>
+<a name="ln150">        else</a>
+<a name="ln151">        {</a>
+<a name="ln152">            err_code |= ri_nfc_address_set (name, strlen ( (char *) name));</a>
+<a name="ln153">        }</a>
+<a name="ln154">    }</a>
+<a name="ln155"> </a>
+<a name="ln156">    return err_code;</a>
+<a name="ln157">}</a>
+<a name="ln158"> </a>
+<a name="ln159">#ifndef CEEDLING</a>
+<a name="ln160">static</a>
+<a name="ln161">#endif</a>
+<a name="ln162">rd_status_t id_set (const char * const id)</a>
+<a name="ln163">{</a>
+<a name="ln164">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln165">    int written = 0;</a>
+<a name="ln166"> </a>
+<a name="ln167">    if (NULL == id)</a>
+<a name="ln168">    {</a>
+<a name="ln169">        err_code |= RD_ERROR_NULL;</a>
+<a name="ln170">    }</a>
+<a name="ln171">    else</a>
+<a name="ln172">    {</a>
+<a name="ln173">        uint8_t id_string[RI_COMM_DIS_STRLEN] = { 0 };</a>
+<a name="ln174">        written = snprintf ( (char *) id_string,</a>
+<a name="ln175">                             RI_COMM_DIS_STRLEN,</a>
+<a name="ln176">                             &quot;ID: %s&quot;,</a>
+<a name="ln177">                             id);</a>
+<a name="ln178"> </a>
+<a name="ln179">        if ( (0 &gt; written)</a>
+<a name="ln180">                || (RI_COMM_DIS_STRLEN &lt;= written))</a>
+<a name="ln181">        {</a>
+<a name="ln182">            err_code |= RD_ERROR_INVALID_LENGTH;</a>
+<a name="ln183">        }</a>
+<a name="ln184">        else</a>
+<a name="ln185">        {</a>
+<a name="ln186">            err_code |= ri_nfc_id_set (id_string,</a>
+<a name="ln187">                                       strlen ( (char *) id_string));</a>
+<a name="ln188">        }</a>
+<a name="ln189">    }</a>
+<a name="ln190"> </a>
+<a name="ln191">    return err_code;</a>
+<a name="ln192">}</a>
+<a name="ln193"> </a>
+<a name="ln194">rd_status_t rt_nfc_init (ri_comm_dis_init_t * const init_data)</a>
+<a name="ln195">{</a>
+<a name="ln196">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln197">    int written = 0;</a>
+<a name="ln198"> </a>
+<a name="ln199">    if (NULL == init_data)</a>
+<a name="ln200">    {</a>
+<a name="ln201">        err_code |= RD_ERROR_NULL;</a>
+<a name="ln202">    }</a>
+<a name="ln203">    else if (rt_nfc_is_init())</a>
+<a name="ln204">    {</a>
+<a name="ln205">        err_code |= RD_ERROR_INVALID_STATE;</a>
+<a name="ln206">    }</a>
+<a name="ln207">    else</a>
+<a name="ln208">    {</a>
+<a name="ln209">        err_code |= sw_set (init_data-&gt;fw_version);</a>
+<a name="ln210">        err_code |= mac_set (init_data-&gt;deviceaddr);</a>
+<a name="ln211">        err_code |= id_set (init_data-&gt;deviceid);</a>
+<a name="ln212">        err_code |= ri_nfc_init (&amp;m_channel);</a>
+<a name="ln213">        ri_comm_message_t msg;</a>
+<a name="ln214">        memcpy (&amp;msg.data, &quot;Data:&quot;, sizeof (&quot;Data:&quot;));</a>
+<a name="ln215">        msg.data_length = 6;</a>
+<a name="ln216">        m_channel.on_evt = rt_nfc_isr;</a>
+<a name="ln217">        err_code |= m_channel.send (&amp;msg);</a>
+<a name="ln218">    }</a>
+<a name="ln219"> </a>
+<a name="ln220">    m_nfc_is_initialized = (RD_SUCCESS == err_code);</a>
+<a name="ln221">    return err_code;</a>
+<a name="ln222">}</a>
+<a name="ln223"> </a>
+<a name="ln224">bool rt_nfc_is_init (void)</a>
+<a name="ln225">{</a>
+<a name="ln226">    return m_nfc_is_initialized;</a>
+<a name="ln227">}</a>
+<a name="ln228"> </a>
+<a name="ln229">/**</a>
+<a name="ln230"> * @brief Uninitializes NFC.</a>
+<a name="ln231"> *</a>
+<a name="ln232"> * After uninitialization device is no longer readable with NFC reader.</a>
+<a name="ln233"> *</a>
+<a name="ln234"> * @return RD_SUCCESS on success.</a>
+<a name="ln235"> * @return error code from stack on error.</a>
+<a name="ln236"> */</a>
+<a name="ln237">rd_status_t rt_nfc_uninit (void)</a>
+<a name="ln238">{</a>
+<a name="ln239">    m_nfc_is_initialized = false;</a>
+<a name="ln240">    return ri_nfc_uninit (&amp;m_channel);</a>
+<a name="ln241">}</a>
+<a name="ln242"> </a>
+<a name="ln243">rd_status_t rt_nfc_send (ri_comm_message_t * message)</a>
+<a name="ln244">{</a>
+<a name="ln245">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln246"> </a>
+<a name="ln247">    if (NULL == message)</a>
+<a name="ln248">    {</a>
+<a name="ln249">        err_code |= RD_ERROR_NULL;</a>
+<a name="ln250">    }</a>
+<a name="ln251">    else</a>
+<a name="ln252">    {</a>
+<a name="ln253">        err_code |= m_channel.send (message);</a>
+<a name="ln254">    }</a>
+<a name="ln255"> </a>
+<a name="ln256">    return err_code;</a>
+<a name="ln257">}</a>
+<a name="ln258"> </a>
+<a name="ln259">void rt_nfc_set_on_connected_isr (const ri_comm_cb_t cb)</a>
+<a name="ln260">{</a>
+<a name="ln261">    m_on_connected = cb;</a>
+<a name="ln262">}</a>
+<a name="ln263"> </a>
+<a name="ln264"> </a>
+<a name="ln265">void rt_nfc_set_on_disconn_isr (const ri_comm_cb_t cb)</a>
+<a name="ln266">{</a>
+<a name="ln267">    m_on_disconnected = cb;</a>
+<a name="ln268">}</a>
+<a name="ln269"> </a>
+<a name="ln270">void rt_nfc_set_on_received_isr (const ri_comm_cb_t cb)</a>
+<a name="ln271">{</a>
+<a name="ln272">    m_on_received = cb;</a>
+<a name="ln273">}</a>
+<a name="ln274"> </a>
+<a name="ln275">void rt_nfc_set_on_sent_isr (const ri_comm_cb_t cb)</a>
+<a name="ln276">{</a>
+<a name="ln277">    m_on_sent = cb;</a>
+<a name="ln278">}</a>
+<a name="ln279"> </a>
+<a name="ln280">bool rt_nfc_is_connected (void)</a>
+<a name="ln281">{</a>
+<a name="ln282">    return m_nfc_is_connected;</a>
+<a name="ln283">}</a>
+<a name="ln284"> </a>
+<a name="ln285">#else</a>
+<a name="ln286">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln287">#include &quot;ruuvi_interface_communication.h&quot;</a>
+<a name="ln288">#include &lt;stdbool.h&gt;</a>
+<a name="ln289">rd_status_t rt_nfc_init (ri_comm_dis_init_t * const init_data)</a>
+<a name="ln290">{</a>
+<a name="ln291">    return  RD_SUCCESS;</a>
+<a name="ln292">}</a>
+<a name="ln293"> </a>
+<a name="ln294">void rt_nfc_set_on_connected_isr (const ri_comm_cb_t cb)</a>
+<a name="ln295">{</a>
+<a name="ln296">    // No implementation needed</a>
+<a name="ln297">}</a>
+<a name="ln298"> </a>
+<a name="ln299"> </a>
+<a name="ln300">void rt_nfc_set_on_disconn_isr (const ri_comm_cb_t cb)</a>
+<a name="ln301">{</a>
+<a name="ln302">    // No implementation needed</a>
+<a name="ln303">}</a>
+<a name="ln304"> </a>
+<a name="ln305">void rt_nfc_set_on_received_isr (const ri_comm_cb_t cb)</a>
+<a name="ln306">{</a>
+<a name="ln307">    // No implementation needed</a>
+<a name="ln308">}</a>
+<a name="ln309"> </a>
+<a name="ln310">void rt_nfc_set_on_sent_isr (const ri_comm_cb_t cb)</a>
+<a name="ln311">{</a>
+<a name="ln312">    // No implementation needed</a>
+<a name="ln313">}</a>
+<a name="ln314"> </a>
+<a name="ln315">bool rt_nfc_is_connected (void)</a>
+<a name="ln316">{</a>
+<a name="ln317">    return false;</a>
+<a name="ln318">}</a>
+<a name="ln319">#endif</a>
+<a name="ln320"> </a>
+<a name="ln321">/*@}*/</a>
+
+</code></pre>
+<div class="balloon" rel="66"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '=' operator should have the same essential type. The current types are: 'Boolean' and 'signed'.</p></div>
+<div class="balloon" rel="71"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '=' operator should have the same essential type. The current types are: 'Boolean' and 'signed'.</p></div>
+<div class="balloon" rel="83"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2519/" target="_blank">V2519</a> The 'default' label should, besides a 'break' statement, contain either a statement or a comment.</p></div>
+<div class="balloon" rel="100"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="100"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 11)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="100"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="113"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="113"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 6)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="113"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="135"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="135"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 11)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="135"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="148"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="148"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 6)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="148"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="169"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="169"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 11)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="169"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="182"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="182"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 6)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="182"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="201"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="201"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 11)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="201"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="205"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="205"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="205"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="215"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="220"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '==' operator should have the same essential type. The current types are: 'signed' and 'unsigned'.</p></div>
+<div class="balloon" rel="194"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2009/" target="_blank">V2009</a> Consider rendering the 'init_data' pointer as a pointer to const.</p></div>
+<div class="balloon" rel="239"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '=' operator should have the same essential type. The current types are: 'Boolean' and 'signed'.</p></div>
+<div class="balloon" rel="249"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="249"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 11)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="249"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>

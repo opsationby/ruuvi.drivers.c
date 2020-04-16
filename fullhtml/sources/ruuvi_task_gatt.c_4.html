@@ -1,0 +1,456 @@
+
+<html>
+<head>
+
+  <meta http-equiv="Content-Type" content="text/html; charset=US-ASCII" />
+  <title>ruuvi_task_gatt.c</title>
+
+  <link rel="stylesheet" href="../style.css"/>
+  <script src="../jquery-3.2.1.min.js"></script>
+</head>
+<body>
+
+<pre><code class = "cpp">
+<a name="ln1">/**</a>
+<a name="ln2"> * Ruuvi Firmware 3.x GATT tasks.</a>
+<a name="ln3"> *</a>
+<a name="ln4"> * License: BSD-3</a>
+<a name="ln5"> * Author: Otso Jousimaa &lt;otso@ojousima.net&gt;</a>
+<a name="ln6"> **/</a>
+<a name="ln7">#include &quot;ruuvi_driver_enabled_modules.h&quot;</a>
+<a name="ln8">#if RT_GATT_ENABLED</a>
+<a name="ln9">#include &quot;ruuvi_driver_error.h&quot;</a>
+<a name="ln10">#include &quot;ruuvi_interface_atomic.h&quot;</a>
+<a name="ln11">#include &quot;ruuvi_interface_communication_ble_advertising.h&quot;</a>
+<a name="ln12">#include &quot;ruuvi_interface_communication_ble_gatt.h&quot;</a>
+<a name="ln13">#include &quot;ruuvi_interface_communication_radio.h&quot;</a>
+<a name="ln14">#include &quot;ruuvi_interface_communication.h&quot;</a>
+<a name="ln15">#include &quot;ruuvi_interface_log.h&quot;</a>
+<a name="ln16">#include &quot;ruuvi_interface_rtc.h&quot;</a>
+<a name="ln17">#include &quot;ruuvi_interface_scheduler.h&quot;</a>
+<a name="ln18">#include &quot;ruuvi_task_advertisement.h&quot;</a>
+<a name="ln19">#include &quot;ruuvi_task_communication.h&quot;</a>
+<a name="ln20">#include &quot;ruuvi_task_gatt.h&quot;</a>
+<a name="ln21"> </a>
+<a name="ln22">#include &lt;stdlib.h&gt;</a>
+<a name="ln23">#include &lt;stdio.h&gt;</a>
+<a name="ln24">#include &lt;string.h&gt;</a>
+<a name="ln25"> </a>
+<a name="ln26">#ifndef TASK_GATT_LOG_LEVEL</a>
+<a name="ln27">#define TASK_GATT_LOG_LEVEL RI_LOG_LEVEL_INFO</a>
+<a name="ln28">#endif</a>
+<a name="ln29"> </a>
+<a name="ln30">#if 0</a>
+<a name="ln31">static inline void LOG (const char * const msg)</a>
+<a name="ln32">{</a>
+<a name="ln33">    ri_log (TASK_GATT_LOG_LEVEL, msg);</a>
+<a name="ln34">}</a>
+<a name="ln35"> </a>
+<a name="ln36">static inline void LOGE (const char * const msg)</a>
+<a name="ln37">{</a>
+<a name="ln38">    ri_log (RI_LOG_ERROR, msg);</a>
+<a name="ln39">}</a>
+<a name="ln40"> </a>
+<a name="ln41">static inline void LOGHEX (const uint8_t * const msg, const size_t len)</a>
+<a name="ln42">{</a>
+<a name="ln43">    ri_log_hex (TASK_GATT_LOG_LEVEL, msg, len);</a>
+<a name="ln44">}</a>
+<a name="ln45">#endif</a>
+<a name="ln46"> </a>
+<a name="ln47">static inline void LOGD (const char * const msg)</a>
+<a name="ln48">{</a>
+<a name="ln49">    ri_log (RI_LOG_LEVEL_DEBUG, msg);</a>
+<a name="ln50">}</a>
+<a name="ln51"> </a>
+<a name="ln52">static inline void LOGDHEX (const uint8_t * const msg, const size_t len)</a>
+<a name="ln53">{</a>
+<a name="ln54">    ri_log_hex (RI_LOG_LEVEL_DEBUG, msg, len);</a>
+<a name="ln55">}</a>
+<a name="ln56"> </a>
+<a name="ln57">static ri_comm_channel_t m_channel;   //!&lt; API for sending data.</a>
+<a name="ln58">static bool m_is_init;</a>
+<a name="ln59">static bool m_nus_is_init;</a>
+<a name="ln60">static bool m_dis_is_init;</a>
+<a name="ln61">static bool m_dfu_is_init;</a>
+<a name="ln62">static bool m_nus_is_connected;</a>
+<a name="ln63">static char m_name[SCAN_RSP_NAME_MAX_LEN + 1] = { 0 };</a>
+<a name="ln64"> </a>
+<a name="ln65">static ri_comm_cb_t m_on_connected;    //!&lt; Callback for connection established</a>
+<a name="ln66">static ri_comm_cb_t m_on_disconnected; //!&lt; Callback for connection lost</a>
+<a name="ln67">static ri_comm_cb_t m_on_received;     //!&lt; Callback for data received</a>
+<a name="ln68">static ri_comm_cb_t m_on_sent;         //!&lt; Callback for data sent</a>
+<a name="ln69"> </a>
+<a name="ln70">// https://github.com/arm-embedded/gcc-arm-none-eabi.debian/blob/master/src/libiberty/strnlen.c</a>
+<a name="ln71">// Not included when compiled with std=c99.</a>
+<a name="ln72">static inline size_t safe_strlen (const char * s, size_t maxlen)</a>
+<a name="ln73">{</a>
+<a name="ln74">    size_t i;</a>
+<a name="ln75"> </a>
+<a name="ln76">    for (i = 0; (i &lt; maxlen) &amp;&amp; ('\0' != s[i]); ++i);</a>
+<a name="ln77"> </a>
+<a name="ln78">    return i;</a>
+<a name="ln79">}</a>
+<a name="ln80"> </a>
+<a name="ln81">#ifdef CEEDLING</a>
+<a name="ln82">void rt_gatt_mock_state_reset()</a>
+<a name="ln83">{</a>
+<a name="ln84">    m_on_connected = NULL;</a>
+<a name="ln85">    m_on_disconnected = NULL;</a>
+<a name="ln86">    m_on_received = NULL;</a>
+<a name="ln87">    m_on_sent = NULL;</a>
+<a name="ln88">    m_is_init = false;</a>
+<a name="ln89">    m_nus_is_init = false;</a>
+<a name="ln90">    m_dfu_is_init = false;</a>
+<a name="ln91">    m_dis_is_init = false;</a>
+<a name="ln92">    m_nus_is_connected = false;</a>
+<a name="ln93">    memset (&amp;m_channel, 0, sizeof (ri_comm_channel_t));</a>
+<a name="ln94">    memset (m_name, 0, sizeof (m_name));</a>
+<a name="ln95">}</a>
+<a name="ln96">#endif</a>
+<a name="ln97"> </a>
+<a name="ln98">/**</a>
+<a name="ln99"> * @brief Event handler for NUS events</a>
+<a name="ln100"> *</a>
+<a name="ln101"> * This function is called in interrupt context, which allows for real-time processing</a>
+<a name="ln102"> * such as feeding softdevice data buffers during connection event.</a>
+<a name="ln103"> * Care must be taken to not call any function which requires external peripherals,</a>
+<a name="ln104"> * such as sensors in this context.</a>
+<a name="ln105"> *</a>
+<a name="ln106"> * If sensors must be read / configured as a response to GATT event, schedule</a>
+<a name="ln107"> * the action and send the results back during next connection event by buffering</a>
+<a name="ln108"> * the response with rt_gatt_send.</a>
+<a name="ln109"> *</a>
+<a name="ln110"> * @param evt Event type</a>
+<a name="ln111"> * @param p_data pointer to event data, if event is</a>
+<a name="ln112"> *               @c RI_COMMUNICATION_RECEIVED received data, NULL otherwise.</a>
+<a name="ln113"> * @param data_len number of bytes in received data, 0 if p_data is NULL.</a>
+<a name="ln114"> *</a>
+<a name="ln115"> */</a>
+<a name="ln116">#ifndef CEEDLING</a>
+<a name="ln117">static</a>
+<a name="ln118">#endif</a>
+<a name="ln119">rd_status_t rt_gatt_on_nus_isr (ri_comm_evt_t evt,</a>
+<a name="ln120">                                void * p_data, size_t data_len)</a>
+<a name="ln121">{</a>
+<a name="ln122">    switch (evt)</a>
+<a name="ln123">    {</a>
+<a name="ln124">        // Note: This gets called only after the NUS notifications have been registered.</a>
+<a name="ln125">        case RI_COMM_CONNECTED:</a>
+<a name="ln126">            m_nus_is_connected = true;</a>
+<a name="ln127">            (NULL != m_on_connected) ? m_on_connected (p_data, data_len) : false;</a>
+<a name="ln128">            break;</a>
+<a name="ln129"> </a>
+<a name="ln130">        case RI_COMM_DISCONNECTED:</a>
+<a name="ln131">            m_nus_is_connected = false;</a>
+<a name="ln132">            (NULL != m_on_disconnected) ? m_on_disconnected (p_data, data_len) : false;</a>
+<a name="ln133">            break;</a>
+<a name="ln134"> </a>
+<a name="ln135">        case RI_COMM_SENT:</a>
+<a name="ln136">            (NULL != m_on_sent) ? m_on_sent (p_data, data_len) : false;</a>
+<a name="ln137">            break;</a>
+<a name="ln138"> </a>
+<a name="ln139">        case RI_COMM_RECEIVED:</a>
+<a name="ln140">            (NULL != m_on_received) ? m_on_received (p_data, data_len) : false;</a>
+<a name="ln141">            break;</a>
+<a name="ln142"> </a>
+<a name="ln143">        default:</a>
+<a name="ln144">            break;</a>
+<a name="ln145">    }</a>
+<a name="ln146"> </a>
+<a name="ln147">    return RD_SUCCESS;</a>
+<a name="ln148">}</a>
+<a name="ln149"> </a>
+<a name="ln150">rd_status_t rt_gatt_dis_init (const ri_comm_dis_init_t * const p_dis)</a>
+<a name="ln151">{</a>
+<a name="ln152">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln153"> </a>
+<a name="ln154">    if (NULL == p_dis)</a>
+<a name="ln155">    {</a>
+<a name="ln156">        err_code |= RD_ERROR_NULL;</a>
+<a name="ln157">    }</a>
+<a name="ln158">    else if (rt_gatt_is_init() &amp;&amp; (!m_dis_is_init))</a>
+<a name="ln159">    {</a>
+<a name="ln160">        err_code |= ri_gatt_dis_init (p_dis);</a>
+<a name="ln161">        m_dis_is_init = (RD_SUCCESS == err_code);</a>
+<a name="ln162">    }</a>
+<a name="ln163">    else</a>
+<a name="ln164">    {</a>
+<a name="ln165">        err_code |= RD_ERROR_INVALID_STATE;</a>
+<a name="ln166">    }</a>
+<a name="ln167"> </a>
+<a name="ln168">    return err_code;</a>
+<a name="ln169">}</a>
+<a name="ln170"> </a>
+<a name="ln171">rd_status_t rt_gatt_nus_init (void)</a>
+<a name="ln172">{</a>
+<a name="ln173">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln174"> </a>
+<a name="ln175">    if (rt_gatt_is_init() &amp;&amp; (!m_nus_is_init))</a>
+<a name="ln176">    {</a>
+<a name="ln177">        err_code |= ri_gatt_nus_init (&amp;m_channel);</a>
+<a name="ln178"> </a>
+<a name="ln179">        if (RD_SUCCESS == err_code)</a>
+<a name="ln180">        {</a>
+<a name="ln181">            m_channel.on_evt = rt_gatt_on_nus_isr;</a>
+<a name="ln182">            m_nus_is_init = true;</a>
+<a name="ln183">        }</a>
+<a name="ln184">    }</a>
+<a name="ln185">    else</a>
+<a name="ln186">    {</a>
+<a name="ln187">        err_code |= RD_ERROR_INVALID_STATE;</a>
+<a name="ln188">    }</a>
+<a name="ln189"> </a>
+<a name="ln190">    return err_code;</a>
+<a name="ln191">}</a>
+<a name="ln192"> </a>
+<a name="ln193">rd_status_t rt_gatt_dfu_init (void)</a>
+<a name="ln194">{</a>
+<a name="ln195">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln196"> </a>
+<a name="ln197">    if (rt_gatt_is_init() &amp;&amp; (!m_dfu_is_init))</a>
+<a name="ln198">    {</a>
+<a name="ln199">        err_code |= ri_gatt_dfu_init();</a>
+<a name="ln200">        m_dfu_is_init = (RD_SUCCESS == err_code);</a>
+<a name="ln201">    }</a>
+<a name="ln202">    else</a>
+<a name="ln203">    {</a>
+<a name="ln204">        err_code |= RD_ERROR_INVALID_STATE;</a>
+<a name="ln205">    }</a>
+<a name="ln206"> </a>
+<a name="ln207">    return err_code;</a>
+<a name="ln208">}</a>
+<a name="ln209"> </a>
+<a name="ln210">rd_status_t rt_gatt_init (const char * const name)</a>
+<a name="ln211">{</a>
+<a name="ln212">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln213"> </a>
+<a name="ln214">    if (NULL == name)</a>
+<a name="ln215">    {</a>
+<a name="ln216">        err_code |= RD_ERROR_NULL;</a>
+<a name="ln217">    }</a>
+<a name="ln218">    else if (rt_adv_is_init() &amp;&amp; (!rt_gatt_is_init()))</a>
+<a name="ln219">    {</a>
+<a name="ln220">        const size_t name_length = safe_strlen (name, sizeof (m_name));</a>
+<a name="ln221"> </a>
+<a name="ln222">        if (sizeof (m_name) &gt; name_length)</a>
+<a name="ln223">        {</a>
+<a name="ln224">            err_code |= ri_gatt_init();</a>
+<a name="ln225">            memcpy (m_name, name, name_length);</a>
+<a name="ln226">            m_name[name_length] = '\0';</a>
+<a name="ln227">        }</a>
+<a name="ln228">        else</a>
+<a name="ln229">        {</a>
+<a name="ln230">            err_code |= RD_ERROR_INVALID_LENGTH;</a>
+<a name="ln231">        }</a>
+<a name="ln232">    }</a>
+<a name="ln233">    else</a>
+<a name="ln234">    {</a>
+<a name="ln235">        err_code |= RD_ERROR_INVALID_STATE;</a>
+<a name="ln236">    }</a>
+<a name="ln237"> </a>
+<a name="ln238">    if (RD_SUCCESS == err_code)</a>
+<a name="ln239">    {</a>
+<a name="ln240">        m_is_init = true;</a>
+<a name="ln241">    }</a>
+<a name="ln242"> </a>
+<a name="ln243">    return err_code;</a>
+<a name="ln244">}</a>
+<a name="ln245"> </a>
+<a name="ln246">rd_status_t rt_gatt_enable (void)</a>
+<a name="ln247">{</a>
+<a name="ln248">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln249"> </a>
+<a name="ln250">    if (rt_gatt_is_init())</a>
+<a name="ln251">    {</a>
+<a name="ln252">        err_code |= rt_adv_connectability_set (true, m_name);</a>
+<a name="ln253">    }</a>
+<a name="ln254">    else</a>
+<a name="ln255">    {</a>
+<a name="ln256">        err_code |= RD_ERROR_INVALID_STATE;</a>
+<a name="ln257">    }</a>
+<a name="ln258"> </a>
+<a name="ln259">    return err_code;</a>
+<a name="ln260">}</a>
+<a name="ln261"> </a>
+<a name="ln262">rd_status_t rt_gatt_disable (void)</a>
+<a name="ln263">{</a>
+<a name="ln264">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln265"> </a>
+<a name="ln266">    if (rt_gatt_is_init())</a>
+<a name="ln267">    {</a>
+<a name="ln268">        err_code |= rt_adv_connectability_set (false, NULL);</a>
+<a name="ln269">    }</a>
+<a name="ln270">    else</a>
+<a name="ln271">    {</a>
+<a name="ln272">        err_code |= RD_ERROR_INVALID_STATE;</a>
+<a name="ln273">    }</a>
+<a name="ln274"> </a>
+<a name="ln275">    return err_code;</a>
+<a name="ln276">}</a>
+<a name="ln277"> </a>
+<a name="ln278">bool rt_gatt_is_init (void)</a>
+<a name="ln279">{</a>
+<a name="ln280">    return m_is_init;</a>
+<a name="ln281">}</a>
+<a name="ln282"> </a>
+<a name="ln283">/**</a>
+<a name="ln284"> * @brief check if NUS is connected, i.e. central has registered to TX notifications.</a>
+<a name="ln285"> *</a>
+<a name="ln286"> * @return true if NUS is connected, false otherwise.</a>
+<a name="ln287"> */</a>
+<a name="ln288">bool rt_gatt_nus_is_connected (void)</a>
+<a name="ln289">{</a>
+<a name="ln290">    return m_nus_is_connected &amp;&amp; (NULL != m_channel.send);</a>
+<a name="ln291">}</a>
+<a name="ln292"> </a>
+<a name="ln293">rd_status_t rt_gatt_send_asynchronous (ri_comm_message_t</a>
+<a name="ln294">                                       * const p_msg)</a>
+<a name="ln295">{</a>
+<a name="ln296">    rd_status_t err_code = RD_SUCCESS;</a>
+<a name="ln297"> </a>
+<a name="ln298">    // State, input check</a>
+<a name="ln299">    if (NULL == p_msg)</a>
+<a name="ln300">    {</a>
+<a name="ln301">        err_code |= RD_ERROR_NULL;</a>
+<a name="ln302">    }</a>
+<a name="ln303">    else if (!rt_gatt_nus_is_connected())</a>
+<a name="ln304">    {</a>
+<a name="ln305">        err_code |= RD_ERROR_INVALID_STATE;</a>
+<a name="ln306">    }</a>
+<a name="ln307">    else</a>
+<a name="ln308">    {</a>
+<a name="ln309">        // Try to put data to SD</a>
+<a name="ln310">        err_code |= m_channel.send (p_msg);</a>
+<a name="ln311"> </a>
+<a name="ln312">        // If success, return. Else put data to ringbuffer</a>
+<a name="ln313">        if (RD_SUCCESS == err_code)</a>
+<a name="ln314">        {</a>
+<a name="ln315">            LOGD (&quot;&gt;&gt;&gt;;&quot;);</a>
+<a name="ln316">            LOGDHEX (p_msg-&gt;data, p_msg-&gt;data_length);</a>
+<a name="ln317">            LOGD (&quot;\r\n&quot;);</a>
+<a name="ln318">        }</a>
+<a name="ln319">        else if (RD_ERROR_RESOURCES == err_code)</a>
+<a name="ln320">        {</a>
+<a name="ln321">            err_code = RD_ERROR_NO_MEM;</a>
+<a name="ln322">        }</a>
+<a name="ln323">        // If the error code is something else than buffer full, return error.</a>
+<a name="ln324">        else</a>
+<a name="ln325">        {</a>
+<a name="ln326">            RD_ERROR_CHECK (err_code, ~RD_ERROR_FATAL);</a>
+<a name="ln327">        }</a>
+<a name="ln328">    }</a>
+<a name="ln329"> </a>
+<a name="ln330">    return err_code;</a>
+<a name="ln331">}</a>
+<a name="ln332"> </a>
+<a name="ln333">void rt_gatt_set_on_connected_isr (const ri_comm_cb_t cb)</a>
+<a name="ln334">{</a>
+<a name="ln335">    m_on_connected = cb;</a>
+<a name="ln336">}</a>
+<a name="ln337"> </a>
+<a name="ln338"> </a>
+<a name="ln339">void rt_gatt_set_on_disconn_isr (const ri_comm_cb_t cb)</a>
+<a name="ln340">{</a>
+<a name="ln341">    m_on_disconnected = cb;</a>
+<a name="ln342">}</a>
+<a name="ln343"> </a>
+<a name="ln344">void rt_gatt_set_on_received_isr (const ri_comm_cb_t cb)</a>
+<a name="ln345">{</a>
+<a name="ln346">    m_on_received = cb;</a>
+<a name="ln347">}</a>
+<a name="ln348"> </a>
+<a name="ln349">void rt_gatt_set_on_sent_isr (const ri_comm_cb_t cb)</a>
+<a name="ln350">{</a>
+<a name="ln351">    m_on_sent = cb;</a>
+<a name="ln352">}</a>
+<a name="ln353"> </a>
+<a name="ln354">bool rt_gatt_is_nus_enabled (void)</a>
+<a name="ln355">{</a>
+<a name="ln356">    return m_nus_is_init;</a>
+<a name="ln357">}</a>
+<a name="ln358"> </a>
+<a name="ln359">#endif</a>
+
+</code></pre>
+<div class="balloon" rel="54"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2572/" target="_blank">V2572</a> The value of the 'len' expression should not be converted from the essential 'unsigned' type to the essential 'ri_log_severity_t' type.</p></div>
+<div class="balloon" rel="76"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="76"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2507/" target="_blank">V2507</a> The body of the 'for' statement should be enclosed in braces.</p></div>
+<div class="balloon" rel="126"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '=' operator should have the same essential type. The current types are: 'Boolean' and 'signed'.</p></div>
+<div class="balloon" rel="131"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '=' operator should have the same essential type. The current types are: 'Boolean' and 'signed'.</p></div>
+<div class="balloon" rel="143"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2519/" target="_blank">V2519</a> The 'default' label should, besides a 'break' statement, contain either a statement or a comment.</p></div>
+<div class="balloon" rel="156"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="156"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 11)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="156"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="161"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '==' operator should have the same essential type. The current types are: 'signed' and 'unsigned'.</p></div>
+<div class="balloon" rel="165"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="165"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="165"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="179"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '==' operator should have the same essential type. The current types are: 'signed' and 'unsigned'.</p></div>
+<div class="balloon" rel="182"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '=' operator should have the same essential type. The current types are: 'Boolean' and 'signed'.</p></div>
+<div class="balloon" rel="187"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="187"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="187"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="200"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '==' operator should have the same essential type. The current types are: 'signed' and 'unsigned'.</p></div>
+<div class="balloon" rel="204"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="204"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="204"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="216"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="216"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 11)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="216"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="230"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="230"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 6)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="230"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="235"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="235"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="235"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="238"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '==' operator should have the same essential type. The current types are: 'signed' and 'unsigned'.</p></div>
+<div class="balloon" rel="240"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '=' operator should have the same essential type. The current types are: 'Boolean' and 'signed'.</p></div>
+<div class="balloon" rel="256"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="256"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="256"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="272"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="272"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="272"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="301"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="301"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 11)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="301"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="305"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="305"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The right operand '(1 << 5)' of the '|=' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="305"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '|=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="313"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '==' operator should have the same essential type. The current types are: 'signed' and 'unsigned'.</p></div>
+<div class="balloon" rel="319"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="319"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '==' operator should have the same essential type. The current types are: 'signed' and 'unsigned'.</p></div>
+<div class="balloon" rel="321"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="321"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2568/" target="_blank">V2568</a> Both operands of the '=' operator should have the same essential type. The current types are: 'unsigned' and 'signed'.</p></div>
+<div class="balloon" rel="326"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The left operand '1' of the '<<' operator should not have the essential 'signed' type.</p></div>
+<div class="balloon" rel="326"><p><span style="font-size:18px">&uarr;</span> <a href="https://www.viva64.com/en/w/v2544/" target="_blank">V2544</a> The '(1 << 31)' operand of the '~' operator should not have the essential 'signed' type.</p></div>
+
+<link rel="stylesheet" href="highlight.css">
+<script src="highlight.pack.js"></script>
+<script src="highlightjs-line-numbers.js"></script>
+<script>hljs.initHighlightingOnLoad();</script>
+<script>hljs.initLineNumbersOnLoad();</script>
+<script>
+  $(document).ready(function() {
+      $('.balloon').each(function () {
+          var bl = $(this);
+          var line = bl.attr('rel');
+          var text = $('a[name="ln'+line+'"]').text();
+
+          var space_count = 0;
+          for(var i = 0; i<text.length; i++){
+              var char = text[i];
+              if((char !== ' ')&&(char !== '\t'))break;
+              if(char === '\t')space_count++;
+              space_count++;
+          }
+
+          bl.css('margin-left', space_count*8);
+          $('a[name="ln'+line+'"]').after(bl);
+      });
+
+      window.location = window.location;
+  });
+</script>
+</body>
+</html>
